@@ -21,23 +21,23 @@ import java.util.function.UnaryOperator;
 import org.example.math.Interval.Bound;
 
 /**
- * Represents a "step function", i.e. a function whose domain can be divided into a finite number of intervals so that
- * the function is constant on each interval.
+ * Represents a "step function", i.e. a function whose domain can be partitioned into a finite number of
+ * {@link Interval}s such that the function is constant on each interval.
  *
- * @param <T> the type of the domain.
+ * @param <X> the type of the domain.
  */
-public class StepFunction<T, V> implements Function<T, V> {
+public final class StepFunction<X, V> implements Function<X, V> {
 
     // needed for equality testing, because Comparator.nullsFirst(..) does not override #equals()
-    private final Comparator<? super T> tComparator;
+    private final Comparator<? super X> xComparator;
     // invariants:
     // 1. all values are non-null
     // 2. all keys are non-null except the first one which represents -infinity
-    private final NavigableMap<T, V> values;
+    private final NavigableMap<X, V> values;
 
-    private StepFunction(NavigableMap<T, V> values, Comparator<? super T> tComparator) {
+    private StepFunction(NavigableMap<X, V> values, Comparator<? super X> xComparator) {
         this.values = values;
-        this.tComparator = tComparator;
+        this.xComparator = xComparator;
         normalize();
     }
 
@@ -65,37 +65,37 @@ public class StepFunction<T, V> implements Function<T, V> {
     }
 
     /**
-     * @param <T> the type of the domain
+     * @param <X> the type of the domain
      * @return the constant one function
      * @see #constant(Object)
      */
-    public static <T extends Comparable<? super T>> StepFunction<T, BigDecimal> one() {
+    public static <X extends Comparable<? super X>> StepFunction<X, BigDecimal> one() {
         return constant(BigDecimal.ONE);
     }
 
     /**
      * @param value the value of the function
-     * @param <T>   the type of the domain
+     * @param <X>   the type of the domain
      * @return the constant function with the given value
      */
-    public static <T extends Comparable<? super T>, V> StepFunction<T, V> constant(V value) {
+    public static <X extends Comparable<? super X>, V> StepFunction<X, V> constant(V value) {
         return constant(value, Comparator.naturalOrder());
     }
 
     /**
      * @param value       the value of the function
-     * @param tComparator the order of the domain
-     * @param <T>         the type of the domain
+     * @param xComparator the order of the domain
+     * @param <X>         the type of the domain
      * @return the constant function with the given value where the domain is ordered by the given comparator.
      */
-    public static <T, V> StepFunction<T, V> constant(V value, Comparator<? super T> tComparator) {
+    public static <X, V> StepFunction<X, V> constant(V value, Comparator<? super X> xComparator) {
         Objects.requireNonNull(value);
-        Objects.requireNonNull(tComparator);
-        return new StepFunction<>(newConstantValues(value, tComparator), tComparator);
+        Objects.requireNonNull(xComparator);
+        return new StepFunction<>(newConstantValues(value, xComparator), xComparator);
     }
 
-    private static <T, V> TreeMap<T, V> newConstantValues(V value, Comparator<? super T> tComparator) {
-        TreeMap<T, V> map = new TreeMap<>(Comparator.nullsFirst(tComparator));
+    private static <X, V> TreeMap<X, V> newConstantValues(V value, Comparator<? super X> xComparator) {
+        TreeMap<X, V> map = new TreeMap<>(new NullFirstComparator<>(xComparator));
         map.put(null, value);
         return map;
     }
@@ -130,15 +130,15 @@ public class StepFunction<T, V> implements Function<T, V> {
             newValues.put(start, valueInside);
 
             // if end is not infinite, then we put a zero after the interval
-            interval.end().getValue().ifPresent(e -> newValues.put(e, valueOutside));
+            interval.end().getValue().ifPresent(end -> newValues.put(end, valueOutside));
         }
         return new StepFunction<>(newValues, interval.comparator());
     }
 
     @Override
-    public V apply(T t) {
-        Objects.requireNonNull(t);
-        return values.floorEntry(t) // always non-null because null is always in the map and the smallest object
+    public V apply(X x) {
+        Objects.requireNonNull(x);
+        return values.floorEntry(x) // always non-null because null is always in the map and the smallest object
                      .getValue();
     }
 
@@ -175,22 +175,22 @@ public class StepFunction<T, V> implements Function<T, V> {
      * @param zero the test value
      * @return a
      */
-    public List<Interval<T>> support(V zero) {
+    public List<Interval<X>> support(V zero) {
         if (this.isConstant()) {
             return this.isConstant(zero) ? List.of() : null;
         }
-        List<Interval<T>> result = new ArrayList<>();
+        List<Interval<X>> result = new ArrayList<>();
 
         var iterator = this.values.entrySet().iterator();
         var last = iterator.next();
 
-        Interval.Bound<T> nonZeroSince = last.getValue().equals(zero) ? null : unboundedBelow();
+        Interval.Bound<X> nonZeroSince = last.getValue().equals(zero) ? null : unboundedBelow();
 
         while (iterator.hasNext()) {
             var current = iterator.next();
             if (current.getValue().equals(zero)) {
                 if (nonZeroSince != null) {
-                    result.add(new Interval<>(nonZeroSince, Bound.of(current.getKey()), tComparator));
+                    result.add(new Interval<>(nonZeroSince, Bound.of(current.getKey()), xComparator));
                     nonZeroSince = null;
                 }
             } else if (nonZeroSince == null) {
@@ -200,7 +200,7 @@ public class StepFunction<T, V> implements Function<T, V> {
         }
 
         if (nonZeroSince != null && !last.getValue().equals(zero)) {
-            result.add(new Interval<>(nonZeroSince, unboundedAbove(), tComparator));
+            result.add(new Interval<>(nonZeroSince, unboundedAbove(), xComparator));
         }
 
         return result;
@@ -208,11 +208,11 @@ public class StepFunction<T, V> implements Function<T, V> {
 
     @SuppressWarnings("unchecked")
     @Override
-    public <V1> StepFunction<T, V1> andThen(Function<? super V, ? extends V1> f) {
+    public <Y> StepFunction<X, Y> andThen(Function<? super V, ? extends Y> f) {
         // unchecked casts so that we can use the more efficient copy constructor here
-        TreeMap<T, Object> result = new TreeMap<>(this.values);
+        TreeMap<X, Object> result = new TreeMap<>(this.values);
         result.replaceAll((k, v) -> f.apply((V) v));
-        return new StepFunction<>((TreeMap<T, V1>) result, tComparator);
+        return new StepFunction<>((TreeMap<X, Y>) result, xComparator);
     }
 
 
@@ -231,21 +231,37 @@ public class StepFunction<T, V> implements Function<T, V> {
      * @param f   the operator
      * @param <X> the type of the domain
      * @param <Y> the type of the values
+     * @return a {@link UnaryOperator} that, given a step-function {@code s}, returns the step-function that results
+     * from applying the given operator to the values, i.e. the function {@code x->f(s(x))}.
+     */
+    public static <X, Y, Z> Function<StepFunction<X, Y>, StepFunction<X, Z>> pointwise(Function<Y, Z> f) {
+        return s -> s.andThen(f);
+    }
+
+    /**
+     * @param f   the operator
+     * @param <X> the type of the domain
+     * @param <Y> the type of the values
      * @return a {@link BinaryOperator} that, given two step-functions {@code s1, s2}, returns the step-function that
      * results from applying the given operator to the values, i.e. the function {@code x->f(s1(x),s2(x))}.
      */
     public static <X, Y> BinaryOperator<StepFunction<X, Y>> pointwise(BinaryOperator<Y> f) {
         final Unionizer<X, Y, Y, Y> unionizer = new Unionizer<>(f);
-        return (s1, s2) -> {
-            requireCompatibility(s1, s2);
-            return new StepFunction<>(unionizer.apply(s1.values, s2.values), s1.tComparator);
-        };
+        return (s1, s2) -> new StepFunction<>(unionizer.apply(s1.values, s2.values), s1.xComparator);
     }
 
-    private static <T, V> void requireCompatibility(StepFunction<T, V> s1, StepFunction<T, V> s2) {
-        if (!s1.tComparator.equals(s2.tComparator)) {
-            throw new IllegalArgumentException();
-        }
+    /**
+     * @param f    the operator
+     * @param <X>  the type of the domain
+     * @param <Y1> the type of the left values
+     * @param <Y2> the type of the right values
+     * @param <Z>  the type of the right values
+     * @return a {@link BinaryOperator} that, given two step-functions {@code s1, s2}, returns the step-function that
+     * results from applying the given operator to the values, i.e. the function {@code x->f(s1(x),s2(x))}.
+     */
+    public static <X, Y1, Y2, Z> BiFunction<StepFunction<X, Y1>, StepFunction<X, Y2>, StepFunction<X, Z>> pointwise(BiFunction<Y1, Y2, Z> f) {
+        final Unionizer<X, Y1, Y2, Z> unionizer = new Unionizer<>(f);
+        return (s1, s2) -> new StepFunction<>(unionizer.apply(s1.values, s2.values), s1.xComparator);
     }
 
     @Override
@@ -253,55 +269,58 @@ public class StepFunction<T, V> implements Function<T, V> {
         if (this == o) {
             return true;
         }
-        return o instanceof StepFunction<?, ?> that && this.tComparator.equals(that.tComparator) && this.values.equals(
+        return o instanceof StepFunction<?, ?> that && this.xComparator.equals(that.xComparator) && this.values.equals(
                 that.values);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(tComparator, values);
+        return Objects.hash(xComparator, values);
     }
 
     /**
-     * Merges two sorted maps by creating a common refinement of the two partitions and applying a BiFunction to both
+     * Merges two step-functions by creating a common refinement of the two partitions and applying a BiFunction to both
      * values on each part.
      */
-    private static class Unionizer<T, V1, V2, V>
-            implements BiFunction<SortedMap<T, V1>, SortedMap<T, V2>, NavigableMap<T, V>> {
+    private static class Unionizer<X, Y1, Y2, Z>
+            implements BiFunction<SortedMap<X, Y1>, SortedMap<X, Y2>, NavigableMap<X, Z>> {
 
-        private final BiFunction<V1, V2, V> action;
+        private final BiFunction<Y1, Y2, Z> action;
 
-        private Iterator<Map.Entry<T, V1>> aIter;
-        private Iterator<Map.Entry<T, V2>> bIter;
+        private Iterator<Map.Entry<X, Y1>> aIter;
+        private Iterator<Map.Entry<X, Y2>> bIter;
 
-        private Map.Entry<T, V1> aEntry;
-        private Map.Entry<T, V2> bEntry;
+        private Map.Entry<X, Y1> aEntry;
+        private Map.Entry<X, Y2> bEntry;
 
-        Unionizer(BiFunction<V1, V2, V> action) {
+        Unionizer(BiFunction<Y1, Y2, Z> action) {
             this.action = action;
         }
 
         @Override
-        public NavigableMap<T, V> apply(SortedMap<T, V1> a, SortedMap<T, V2> b) {
+        public NavigableMap<X, Z> apply(SortedMap<X, Y1> a, SortedMap<X, Y2> b) {
+            final Comparator<? super X> comparator = a.comparator();
+            if (!comparator.equals(b.comparator())) { // equality from NullFirstComparator
+                throw new IllegalArgumentException("Operation not applicable to incompatible step-functions");
+            }
+
             // we iterate in decreasing order through both maps
             aIter = a.sequencedEntrySet().reversed().iterator();
-            assert aIter.hasNext();
-            aEntry = aIter.next();
-
             bIter = b.sequencedEntrySet().reversed().iterator();
-            assert bIter.hasNext();
+
+            // both maps are non-empty; they contain null as lowest key
+            aEntry = aIter.next();
             bEntry = bIter.next();
 
-            final Comparator<? super T> mapComparator = a.comparator();
-            final TreeMap<T, V> result = new TreeMap<>(mapComparator);
+            final TreeMap<X, Z> result = new TreeMap<>(comparator);
 
             // zig-zag algorithm
             boolean moreToDo = true;
             while (moreToDo) {
-                V currentValue = this.action.apply(aEntry.getValue(), bEntry.getValue());
+                Z currentValue = this.action.apply(aEntry.getValue(), bEntry.getValue());
 
-                int comp = mapComparator.compare(aEntry.getKey(), bEntry.getKey());
-                T currentKey;
+                int comp = comparator.compare(aEntry.getKey(), bEntry.getKey());
+                X currentKey;
                 if (comp < 0) {
                     // A < B => use B key & decrease B
                     currentKey = bEntry.getKey();
@@ -316,7 +335,7 @@ public class StepFunction<T, V> implements Function<T, V> {
                     boolean moreB = decreaseB();
                     moreToDo = moreA && moreB;
                 } else {
-                    // B < A => use A key & decrease left
+                    // B < A => use A key & decrease A
                     currentKey = aEntry.getKey();
                     moreToDo = decreaseA();
                 }
@@ -342,6 +361,26 @@ public class StepFunction<T, V> implements Function<T, V> {
             } else {
                 return false;
             }
+        }
+    }
+
+    /**
+     * internal replacement for {@link Comparator#nullsFirst(Comparator)} to override equals.
+     *
+     * @param inner
+     * @param <T>
+     */
+    private record NullFirstComparator<T>(Comparator<T> inner) implements Comparator<T> {
+
+        @Override
+        public int compare(T o1, T o2) {
+            if (o1 == null) {
+                return o2 == null ? 0 : -1;
+            }
+            if (o2 == null) {
+                return 1;
+            }
+            return inner.compare(o1, o2);
         }
     }
 }
