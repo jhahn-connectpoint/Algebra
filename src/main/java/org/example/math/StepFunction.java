@@ -13,6 +13,7 @@ import java.util.NavigableMap;
 import java.util.Objects;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.function.BiFunction;
 import java.util.function.BinaryOperator;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
@@ -27,8 +28,6 @@ import org.example.math.Interval.Bound;
  */
 public class StepFunction<T, V> implements Function<T, V> {
 
-    // the nulls-first-comparator used in the TreeSet
-    private final Comparator<? super T> mapComparator;
     // needed for equality testing, because Comparator.nullsFirst(..) does not override #equals()
     private final Comparator<? super T> tComparator;
     // invariants:
@@ -36,9 +35,8 @@ public class StepFunction<T, V> implements Function<T, V> {
     // 2. all keys are non-null except the first one which represents -infinity
     private final NavigableMap<T, V> values;
 
-    private StepFunction(TreeMap<T, V> values, Comparator<? super T> tComparator) {
+    private StepFunction(NavigableMap<T, V> values, Comparator<? super T> tComparator) {
         this.values = values;
-        this.mapComparator = values.comparator();
         this.tComparator = tComparator;
         normalize();
     }
@@ -110,17 +108,29 @@ public class StepFunction<T, V> implements Function<T, V> {
      * {@code value} within.
      */
     public static <X> StepFunction<X, BigDecimal> singleStep(Interval<X> interval, BigDecimal value) {
-        Objects.requireNonNull(interval);
-        Objects.requireNonNull(value);
+        return singleStep(interval, value, BigDecimal.ZERO);
+    }
 
-        final TreeMap<X, BigDecimal> newValues = newConstantValues(BigDecimal.ZERO, interval.comparator());
+    /**
+     * @param interval     an interval
+     * @param valueInside  a value
+     * @param valueOutside a value
+     * @param <X>          the type of the domain
+     * @return a step function that has the value {@code valueOutside} outside of the given interval and
+     * {@code valueInside} within.
+     */
+    public static <X, V> StepFunction<X, V> singleStep(Interval<X> interval, V valueInside, V valueOutside) {
+        Objects.requireNonNull(interval);
+        Objects.requireNonNull(valueInside);
+
+        final TreeMap<X, V> newValues = newConstantValues(valueOutside, interval.comparator());
         if (!interval.isEmpty()) {
             // if start is infinite, then it is negative infinity which we represent in this class with null
             X start = interval.start().getValue().orElse(null);
-            newValues.put(start, value);
+            newValues.put(start, valueInside);
 
             // if end is not infinite, then we put a zero after the interval
-            interval.end().getValue().ifPresent(e -> newValues.put(e, BigDecimal.ZERO));
+            interval.end().getValue().ifPresent(e -> newValues.put(e, valueOutside));
         }
         return new StepFunction<>(newValues, interval.comparator());
     }
@@ -225,10 +235,10 @@ public class StepFunction<T, V> implements Function<T, V> {
      * results from applying the given operator to the values, i.e. the function {@code x->f(s1(x),s2(x))}.
      */
     public static <X, Y> BinaryOperator<StepFunction<X, Y>> pointwise(BinaryOperator<Y> f) {
+        final Unionizer<X, Y, Y, Y> unionizer = new Unionizer<>(f);
         return (s1, s2) -> {
             requireCompatibility(s1, s2);
-            return new StepFunction<>(
-                    new Unionizer<>(s1.values, s2.values, s1.mapComparator).forEachStep(f), s1.tComparator);
+            return new StepFunction<>(unionizer.apply(s1.values, s2.values), s1.tComparator);
         };
     }
 
@@ -253,18 +263,26 @@ public class StepFunction<T, V> implements Function<T, V> {
     }
 
     /**
-     * Iterates through sorted maps from top to bottom, producing a union of both maps
+     * Merges two sorted maps by creating a common refinement of the two partitions and applying a BiFunction to both
+     * values on each part.
      */
-    private static class Unionizer<T, V> {
+    private static class Unionizer<T, V1, V2, V>
+            implements BiFunction<SortedMap<T, V1>, SortedMap<T, V2>, NavigableMap<T, V>> {
 
-        private final Iterator<Map.Entry<T, V>> aIter;
-        private final Iterator<Map.Entry<T, V>> bIter;
+        private final BiFunction<V1, V2, V> action;
 
-        private final Comparator<? super T> mapComparator;
-        private Map.Entry<T, V> aEntry;
-        private Map.Entry<T, V> bEntry;
+        private Iterator<Map.Entry<T, V1>> aIter;
+        private Iterator<Map.Entry<T, V2>> bIter;
 
-        Unionizer(SortedMap<T, V> a, SortedMap<T, V> b, Comparator<? super T> mapComparator) {
+        private Map.Entry<T, V1> aEntry;
+        private Map.Entry<T, V2> bEntry;
+
+        Unionizer(BiFunction<V1, V2, V> action) {
+            this.action = action;
+        }
+
+        @Override
+        public NavigableMap<T, V> apply(SortedMap<T, V1> a, SortedMap<T, V2> b) {
             // we iterate in decreasing order through both maps
             aIter = a.sequencedEntrySet().reversed().iterator();
             assert aIter.hasNext();
@@ -273,16 +291,14 @@ public class StepFunction<T, V> implements Function<T, V> {
             bIter = b.sequencedEntrySet().reversed().iterator();
             assert bIter.hasNext();
             bEntry = bIter.next();
-            this.mapComparator = mapComparator;
-        }
 
-        TreeMap<T, V> forEachStep(BinaryOperator<V> action) {
+            final Comparator<? super T> mapComparator = a.comparator();
             final TreeMap<T, V> result = new TreeMap<>(mapComparator);
 
             // zig-zag algorithm
             boolean moreToDo = true;
             while (moreToDo) {
-                V currentValue = action.apply(aEntry.getValue(), bEntry.getValue());
+                V currentValue = this.action.apply(aEntry.getValue(), bEntry.getValue());
 
                 int comp = mapComparator.compare(aEntry.getKey(), bEntry.getKey());
                 T currentKey;
