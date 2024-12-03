@@ -6,6 +6,7 @@ import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.example.math.StepFunction.*;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.function.BinaryOperator;
 
 import org.junit.jupiter.api.Nested;
@@ -218,9 +219,9 @@ class StepFunctionTest {
 
         @Test
         void constant() {
-            var f = StepFunction.constant(ONE);
+            StepFunction<Instant, BigDecimal> f = StepFunction.constant(ONE);
 
-            assertThat(f.support(ZERO)).isNull();
+            assertThat(f.support(ZERO)).containsExactly(Interval.all());
         }
 
         @Test

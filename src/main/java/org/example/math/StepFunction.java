@@ -166,19 +166,14 @@ public final class StepFunction<X, V> implements Function<X, V> {
     }
 
     /**
-     * Returns the set where this step function differs from the given value, expressed as a list of disjoint
+     * Returns the set where this step function differs from the given "zero" value, expressed as a list of disjoint
      * {@link Interval}s. The returned list is empty iff this differs nowhere from the given value, i.e. if this
-     * function is constant and everywhere equal to the given value. {@code null} is returned to represent the whole
-     * domain {@code X} (there is no {@link Interval} that would correspond to that if {@code X} is unbounded in the
-     * given order).
+     * function is constant and everywhere equal to the given value.
      *
      * @param zero the test value
      * @return a
      */
     public List<Interval<X>> support(V zero) {
-        if (this.isConstant()) {
-            return this.isConstant(zero) ? List.of() : null;
-        }
         List<Interval<X>> result = new ArrayList<>();
 
         var iterator = this.values.entrySet().iterator();
