@@ -285,6 +285,15 @@ class StepFunctionTest {
 
             assertThat(function.support(ZERO)).containsExactly(interval);
         }
+
+        @Test
+        void partialComposition() {
+            var f = StepFunction.singleStep(Interval.of(1, 3), ONE, null);
+            var minusF = f.andThen(BigDecimal::negate);
+
+            assertThat(minusF.values()).containsExactly(null, ONE.negate(), null);
+            assertThat(minusF.support(ZERO)).containsExactly(Interval.of(1, 3));
+        }
     }
 
     @Nested

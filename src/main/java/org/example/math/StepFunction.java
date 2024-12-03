@@ -287,7 +287,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
     public <Y> StepFunction<X, Y> andThen(Function<? super V, ? extends Y> f) {
         // unchecked casts so that we can use the more efficient copy constructor here
         TreeMap<X, Object> result = new TreeMap<>(this.values);
-        result.replaceAll((k, v) -> f.apply((V) v));
+        result.replaceAll((k, v) -> v == null ? null : f.apply((V) v));
         return new StepFunction<>((TreeMap<X, Y>) result, xComparator);
     }
 
