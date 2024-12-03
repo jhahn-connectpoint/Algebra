@@ -471,17 +471,17 @@ class IntervalTest {
 
         @Test
         void bothUnbounded() {
-            assertThat(Interval.all()).hasToString("[-infinity,+infinity[");
+            assertThat(Interval.all()).hasToString("[-∞,+∞[");
         }
 
         @Test
         void unboundedBelow() {
-            assertThat(Interval.of(Bound.unboundedBelow(), Bound.of(-1))).hasToString("[-infinity,-1[");
+            assertThat(Interval.of(Bound.unboundedBelow(), Bound.of(-1))).hasToString("[-∞,-1[");
         }
 
         @Test
         void unboundedAbove() {
-            assertThat(Interval.of(Bound.of(1), Bound.unboundedAbove())).hasToString("[1,+infinity[");
+            assertThat(Interval.of(Bound.of(1), Bound.unboundedAbove())).hasToString("[1,+∞[");
         }
     }
 }

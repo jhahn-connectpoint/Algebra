@@ -293,7 +293,7 @@ public record Interval<T>(Bound<T> start, Bound<T> end, Comparator<? super T> co
 
         @Override
         public String toString() {
-            return this == NEGATIVE ? "-infinity" : "+infinity";
+            return this == NEGATIVE ? "-∞" : "+∞";
         }
     }
 }
