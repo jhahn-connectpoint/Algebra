@@ -167,8 +167,8 @@ public final class StepFunction<X, V> implements Function<X, V> {
 
     /**
      * Returns the set where this step function differs from the given "zero" value, expressed as a list of disjoint
-     * {@link Interval}s. The returned list is empty iff this differs nowhere from the given value, i.e. if this
-     * function is constant and everywhere equal to the given value.
+     * {@link Interval}s. The returned list is empty iff this function is zero everywhere. The returned list contains
+     * the single, {@link Interval#all() all-encompassing interval} if this function is non-zero everywhere.
      *
      * @param zero the test value
      * @return a
@@ -260,7 +260,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
     }
 
     @Override
-    public final boolean equals(Object o) {
+    public boolean equals(Object o) {
         if (this == o) {
             return true;
         }
