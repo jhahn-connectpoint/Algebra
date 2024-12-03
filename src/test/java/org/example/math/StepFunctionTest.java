@@ -7,8 +7,10 @@ import static org.example.math.StepFunction.*;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.util.Map;
 import java.util.function.BinaryOperator;
 
+import org.example.math.Interval.Bound;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
@@ -226,12 +228,43 @@ class StepFunctionTest {
 
         @Test
         void almostConstantExceptForOneBit() {
-            final Interval<Integer> leftPiece = Interval.of(Interval.Bound.unboundedBelow(), Interval.Bound.of(0));
-            final Interval<Integer> rightPiece = Interval.of(Interval.Bound.of(1), Interval.Bound.unboundedAbove());
+            final Interval<Integer> leftPiece = Interval.of(Bound.unboundedBelow(), Bound.of(0));
+            final Interval<Integer> rightPiece = Interval.of(Bound.of(1), Bound.unboundedAbove());
 
             var f = ADDITION.apply(StepFunction.singleStep(leftPiece, ONE), StepFunction.singleStep(rightPiece, ONE));
 
             assertThat(f.support(ZERO)).containsExactly(leftPiece, rightPiece);
+        }
+    }
+
+    @Nested
+    class TestPartitionValues {
+
+        @Test
+        void zero() {
+            StepFunction<Instant, BigDecimal> f = StepFunction.zero();
+
+            assertThat(f.asPartitionWithValues()).containsExactly(Map.entry(Interval.all(), BigDecimal.ZERO));
+        }
+
+        @Test
+        void constant() {
+            StepFunction<Instant, BigDecimal> f = StepFunction.constant(ONE);
+
+            assertThat(f.asPartitionWithValues()).containsExactly(Map.entry(Interval.all(), BigDecimal.ONE));
+        }
+
+        @Test
+        void nonConstant() {
+            final Interval<Integer> leftPiece = Interval.of(Bound.unboundedBelow(), Bound.of(0));
+            final Interval<Integer> rightPiece = Interval.of(Bound.of(1), Bound.unboundedAbove());
+
+            var f = ADDITION.apply(StepFunction.singleStep(leftPiece, ONE), StepFunction.singleStep(rightPiece, TWO));
+
+            assertThat(f.asPartitionWithValues()).containsExactly(
+                    Map.entry(Interval.of(Bound.unboundedBelow(), Bound.of(0)), BigDecimal.ONE),
+                    Map.entry(Interval.of(0,1), ZERO),
+                    Map.entry(Interval.of(Bound.of(1), Bound.unboundedAbove()), TWO));
         }
     }
 }

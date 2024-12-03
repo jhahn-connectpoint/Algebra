@@ -5,12 +5,15 @@ import static org.example.math.Interval.Bound.unboundedBelow;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.Objects;
+import java.util.SequencedMap;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.function.BiFunction;
@@ -158,6 +161,30 @@ public final class StepFunction<X, V> implements Function<X, V> {
     }
 
     /**
+     * Returns the representation of this function as disjoint {@link Interval}s and values.
+     *
+     * @return a map {@link Interval} to this function's values
+     */
+    public SequencedMap<Interval<X>, V> asPartitionWithValues() {
+        SequencedMap<Interval<X>, V> result = new LinkedHashMap<>();
+
+        Iterator<Map.Entry<X, V>> iterator = values.entrySet().iterator();
+        Map.Entry<X, V> last = iterator.next();
+
+        while (iterator.hasNext()) {
+            Map.Entry<X, V> current = iterator.next();
+
+            Interval.Bound<X> lowerBound = last.getKey() == null ? Bound.unboundedBelow() : Bound.of(last.getKey());
+            result.putLast(new Interval<>(lowerBound, Bound.of(current.getKey()), xComparator), last.getValue());
+
+            last = current;
+        }
+        result.put(new Interval<>(Bound.of(last.getKey()), Bound.unboundedAbove(), xComparator), last.getValue());
+
+        return Collections.unmodifiableSequencedMap(result);
+    }
+
+    /**
      * @return the list of this function's values, ordered by the given order on the domain beginning with the value at
      * "-infinity" and ending with the value at "+infinity".
      */
@@ -241,8 +268,8 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * results from applying the given operator to the values, i.e. the function {@code x->f(s1(x),s2(x))}.
      */
     public static <X, Y> BinaryOperator<StepFunction<X, Y>> pointwise(BinaryOperator<Y> f) {
-        final Unionizer<X, Y, Y, Y> unionizer = new Unionizer<>(f);
-        return (s1, s2) -> new StepFunction<>(unionizer.apply(s1.values, s2.values), s1.xComparator);
+        final PartitionMerger<X, Y, Y, Y> partitionMerger = new PartitionMerger<>(f);
+        return (s1, s2) -> new StepFunction<>(partitionMerger.apply(s1.values, s2.values), s1.xComparator);
     }
 
     /**
@@ -255,8 +282,8 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * results from applying the given operator to the values, i.e. the function {@code x->f(s1(x),s2(x))}.
      */
     public static <X, Y1, Y2, Z> BiFunction<StepFunction<X, Y1>, StepFunction<X, Y2>, StepFunction<X, Z>> pointwise(BiFunction<Y1, Y2, Z> f) {
-        final Unionizer<X, Y1, Y2, Z> unionizer = new Unionizer<>(f);
-        return (s1, s2) -> new StepFunction<>(unionizer.apply(s1.values, s2.values), s1.xComparator);
+        final PartitionMerger<X, Y1, Y2, Z> partitionMerger = new PartitionMerger<>(f);
+        return (s1, s2) -> new StepFunction<>(partitionMerger.apply(s1.values, s2.values), s1.xComparator);
     }
 
     @Override
@@ -277,7 +304,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * Merges two step-functions by creating a common refinement of the two partitions and applying a BiFunction to both
      * values on each part.
      */
-    private static class Unionizer<X, Y1, Y2, Z>
+    private static class PartitionMerger<X, Y1, Y2, Z>
             implements BiFunction<SortedMap<X, Y1>, SortedMap<X, Y2>, NavigableMap<X, Z>> {
 
         private final BiFunction<Y1, Y2, Z> action;
@@ -288,7 +315,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
         private Map.Entry<X, Y1> aEntry;
         private Map.Entry<X, Y2> bEntry;
 
-        Unionizer(BiFunction<Y1, Y2, Z> action) {
+        PartitionMerger(BiFunction<Y1, Y2, Z> action) {
             this.action = action;
         }
 
