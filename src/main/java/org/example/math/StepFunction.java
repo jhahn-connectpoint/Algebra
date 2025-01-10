@@ -218,6 +218,8 @@ public final class StepFunction<X, V> implements Function<X, V> {
     public static <X, V> StepFunction<X, V> fromPartitionWithValues(Map<Interval<X>, V> partition, V defaultValue) {
         var iterator = partition.keySet().iterator();
         if (!iterator.hasNext()) {
+            // It is tempting to return StepFunction.constant(null), the function that is undefined everywhere.
+            // However, we cannot know which comparator to use in that case.
             throw new IllegalArgumentException("Partition is empty.");
         }
 
@@ -371,84 +373,88 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * Merges two step-functions by creating a common refinement of the two partitions and applying a BiFunction to both
      * values on each part.
      */
-    private static class PartitionMerger<X, Y1, Y2, Z>
+    private record PartitionMerger<X, Y1, Y2, Z>(BiFunction<Y1, Y2, Z> action)
             implements BiFunction<SortedMap<X, Y1>, SortedMap<X, Y2>, NavigableMap<X, Z>> {
-
-        private final BiFunction<Y1, Y2, Z> action;
-
-        private Iterator<Map.Entry<X, Y1>> aIter;
-        private Iterator<Map.Entry<X, Y2>> bIter;
-
-        private Map.Entry<X, Y1> aEntry;
-        private Map.Entry<X, Y2> bEntry;
-
-        PartitionMerger(BiFunction<Y1, Y2, Z> action) {
-            this.action = action;
-        }
 
         @Override
         public NavigableMap<X, Z> apply(SortedMap<X, Y1> a, SortedMap<X, Y2> b) {
-            final Comparator<? super X> comparator = a.comparator();
-            if (!comparator.equals(b.comparator())) { // equality from NullFirstComparator
-                throw new IllegalArgumentException("Operation not applicable to incompatible step-functions");
-            }
+            return new Iteration<>(a, b, action).result;
+        }
 
-            // we iterate in decreasing order through both maps
-            aIter = a.sequencedEntrySet().reversed().iterator();
-            bIter = b.sequencedEntrySet().reversed().iterator();
+        /**
+         * Isolates a single iteration of the merger for thread-safety.
+         */
+        private static class Iteration<X, Y1, Y2, Z> {
 
-            // both maps are non-empty; they contain null as lowest key
-            aEntry = aIter.next();
-            bEntry = bIter.next();
+            private final Iterator<Map.Entry<X, Y1>> aIter;
+            private final Iterator<Map.Entry<X, Y2>> bIter;
 
-            final TreeMap<X, Z> result = new TreeMap<>(comparator);
+            private Map.Entry<X, Y1> aEntry;
+            private Map.Entry<X, Y2> bEntry;
 
-            // zig-zag algorithm
-            boolean moreToDo = true;
-            while (moreToDo) {
-                Z currentValue = this.action.apply(aEntry.getValue(), bEntry.getValue());
+            private final TreeMap<X, Z> result;
 
-                int comp = comparator.compare(aEntry.getKey(), bEntry.getKey());
-                X currentKey;
-                if (comp < 0) {
-                    // A < B => use B key & decrease B
-                    currentKey = bEntry.getKey();
-                    moreToDo = decreaseB();
-                } else if (comp == 0) {
-                    // A == B => use any key & decrease both
-                    //
-                    // Note that both maps have null as their lowest key, so we will inevitably end the loop with this
-                    // branch.
-                    currentKey = aEntry.getKey();
-                    boolean moreA = decreaseA();
-                    boolean moreB = decreaseB();
-                    moreToDo = moreA && moreB;
-                } else {
-                    // B < A => use A key & decrease A
-                    currentKey = aEntry.getKey();
-                    moreToDo = decreaseA();
+            Iteration(SortedMap<X, Y1> a, SortedMap<X, Y2> b, BiFunction<Y1, Y2, Z> action) {
+                final Comparator<? super X> comparator = a.comparator();
+                if (!comparator.equals(b.comparator())) { // equality from NullFirstComparator
+                    throw new IllegalArgumentException("Operation not applicable to incompatible step-functions");
                 }
-                result.put(currentKey, currentValue);
-            }
 
-            return result;
-        }
+                // we iterate in decreasing order through both maps
+                aIter = a.sequencedEntrySet().reversed().iterator();
+                bIter = b.sequencedEntrySet().reversed().iterator();
 
-        private boolean decreaseA() {
-            if (aIter.hasNext()) {
+                // both maps are non-empty; they contain null as lowest key
                 aEntry = aIter.next();
-                return true;
-            } else {
-                return false;
-            }
-        }
-
-        private boolean decreaseB() {
-            if (bIter.hasNext()) {
                 bEntry = bIter.next();
-                return true;
-            } else {
-                return false;
+
+                result = new TreeMap<>(comparator);
+
+                // zig-zag algorithm
+                boolean moreToDo = true;
+                while (moreToDo) {
+                    Z currentValue = action.apply(aEntry.getValue(), bEntry.getValue());
+
+                    int comp = comparator.compare(aEntry.getKey(), bEntry.getKey());
+                    X currentKey;
+                    if (comp < 0) {
+                        // A < B => use B key & decrease B
+                        currentKey = bEntry.getKey();
+                        moreToDo = decreaseB();
+                    } else if (comp == 0) {
+                        // A == B => use any key & decrease both
+                        //
+                        // Note that both maps have null as their lowest key, so we will inevitably end the loop with
+                        // this branch.
+                        currentKey = aEntry.getKey();
+                        boolean moreA = decreaseA();
+                        boolean moreB = decreaseB();
+                        moreToDo = moreA && moreB;
+                    } else {
+                        // B < A => use A key & decrease A
+                        currentKey = aEntry.getKey();
+                        moreToDo = decreaseA();
+                    }
+                    result.put(currentKey, currentValue);
+                }
+            }
+
+            private boolean decreaseA() {
+                if (aIter.hasNext()) {
+                    aEntry = aIter.next();
+                    return true;
+                } else {
+                    return false;
+                }
+            }
+
+            private boolean decreaseB() {
+                if (bIter.hasNext()) {
+                    bEntry = bIter.next();
+                    return true;
+                } else {
+                    return false;
+                }
             }
         }
     }
