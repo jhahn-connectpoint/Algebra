@@ -227,9 +227,9 @@ public final class StepFunction<X, V> implements Function<X, V> {
         NavigableMap<X, V> values = newConstantValues(defaultValue, xComparator);
 
         PartitionMerger<X, V, V, V> merger = new PartitionMerger<>((oldValue, newValue) -> {
-            if (oldValue == defaultValue) {
+            if (Objects.equals(oldValue, defaultValue)) {
                 return newValue;
-            } else if (newValue == defaultValue) {
+            } else if (Objects.equals(newValue, defaultValue)) {
                 return oldValue;
             } else {
                 throw new IllegalArgumentException("Intervals must not overlap");
@@ -292,16 +292,8 @@ public final class StepFunction<X, V> implements Function<X, V> {
     }
 
 
-    /**
-     * @param f   the operator
-     * @param <X> the type of the domain
-     * @param <Y> the type of the values
-     * @return a {@link UnaryOperator} that, given a step-function {@code s}, returns the step-function that results
-     * from applying the given operator to the values, i.e. the function {@code x->f(s(x))}.
-     */
-    public static <X, Y> UnaryOperator<StepFunction<X, Y>> pointwise(UnaryOperator<Y> f) {
-        return s -> s.andThen(f);
-    }
+    @FunctionalInterface
+    public interface EndoFunctor<X, Y> extends UnaryOperator<StepFunction<X, Y>>, Functor<X, Y, Y> {}
 
     /**
      * @param f   the operator
@@ -310,9 +302,26 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * @return a {@link UnaryOperator} that, given a step-function {@code s}, returns the step-function that results
      * from applying the given operator to the values, i.e. the function {@code x->f(s(x))}.
      */
-    public static <X, Y, Z> Function<StepFunction<X, Y>, StepFunction<X, Z>> pointwise(Function<Y, Z> f) {
+    public static <X, Y> EndoFunctor<X, Y> pointwise(UnaryOperator<Y> f) {
         return s -> s.andThen(f);
     }
+
+    @FunctionalInterface
+    public interface Functor<X, Y, Z> extends Function<StepFunction<X, Y>, StepFunction<X, Z>> {}
+
+    /**
+     * @param f   the operator
+     * @param <X> the type of the domain
+     * @param <Y> the type of the values
+     * @return a {@link UnaryOperator} that, given a step-function {@code s}, returns the step-function that results
+     * from applying the given operator to the values, i.e. the function {@code x->f(s(x))}.
+     */
+    public static <X, Y, Z> Functor<X, Y, Z> pointwise(Function<Y, Z> f) {
+        return s -> s.andThen(f);
+    }
+
+    @FunctionalInterface
+    public interface EndoBiFunctor<X, Y> extends BinaryOperator<StepFunction<X, Y>>, BiFunctor<X, Y, Y, Y> {}
 
     /**
      * @param f   the operator
@@ -321,10 +330,14 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * @return a {@link BinaryOperator} that, given two step-functions {@code s1, s2}, returns the step-function that
      * results from applying the given operator to the values, i.e. the function {@code x->f(s1(x),s2(x))}.
      */
-    public static <X, Y> BinaryOperator<StepFunction<X, Y>> pointwise(BinaryOperator<Y> f) {
+    public static <X, Y> EndoBiFunctor<X, Y> pointwise(BinaryOperator<Y> f) {
         final PartitionMerger<X, Y, Y, Y> partitionMerger = new PartitionMerger<>(f);
         return (s1, s2) -> new StepFunction<>(partitionMerger.apply(s1.values, s2.values), s1.xComparator);
     }
+
+    @FunctionalInterface
+    public interface BiFunctor<X, Y1, Y2, Z>
+            extends BiFunction<StepFunction<X, Y1>, StepFunction<X, Y2>, StepFunction<X, Z>> {}
 
     /**
      * @param f    the operator
@@ -335,7 +348,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * @return a {@link BinaryOperator} that, given two step-functions {@code s1, s2}, returns the step-function that
      * results from applying the given operator to the values, i.e. the function {@code x->f(s1(x),s2(x))}.
      */
-    public static <X, Y1, Y2, Z> BiFunction<StepFunction<X, Y1>, StepFunction<X, Y2>, StepFunction<X, Z>> pointwise(BiFunction<Y1, Y2, Z> f) {
+    public static <X, Y1, Y2, Z> BiFunctor<X, Y1, Y2, Z> pointwise(BiFunction<Y1, Y2, Z> f) {
         final PartitionMerger<X, Y1, Y2, Z> partitionMerger = new PartitionMerger<>(f);
         return (s1, s2) -> new StepFunction<>(partitionMerger.apply(s1.values, s2.values), s1.xComparator);
     }
