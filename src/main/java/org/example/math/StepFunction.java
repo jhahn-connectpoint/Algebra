@@ -4,6 +4,7 @@ import static org.example.math.Interval.Bound.unboundedAbove;
 import static org.example.math.Interval.Bound.unboundedBelow;
 
 import java.math.BigDecimal;
+import java.util.AbstractMap;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -11,15 +12,16 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.NavigableMap;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.SequencedMap;
-import java.util.SortedMap;
-import java.util.TreeMap;
+import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.BinaryOperator;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.UnaryOperator;
+import java.util.stream.Collectors;
 
 import org.example.math.Interval.Bound;
 
@@ -38,27 +40,26 @@ public final class StepFunction<X, V> implements Function<X, V> {
     // needed for equality testing, because Comparator.nullsFirst(..) does not override #equals()
     private final Comparator<? super X> xComparator;
     // invariants:
+    // - all elements of the list are non-null
     // - all keys are non-null except the first one which represents -infinity
-    private final NavigableMap<X, V> values;
+    // - the non-null keys are in ascending order w.r.t. xComparator
+    private final List<Map.Entry<X, V>> entries;
 
-    private StepFunction(NavigableMap<X, V> values, Comparator<? super X> xComparator) {
-        this.values = values;
+    private StepFunction(List<Map.Entry<X, V>> entries, Comparator<? super X> xComparator) {
         this.xComparator = xComparator;
-        normalize();
-    }
 
-    private void normalize() {
-        var iterator = this.values.values().iterator();
-        V last = iterator.next(); // values map is never empty
-        while (iterator.hasNext()) {
-            var current = iterator.next();
-            if (Objects.equals(current, last)) { // implicit null check for all values in the map
+        this.entries = entries.stream().mapMulti(new BiConsumer<Map.Entry<X, V>, Consumer<Map.Entry<X, V>>>() {
+            Object last = new Object(); // sentinel value
+
+            @Override
+            public void accept(Map.Entry<X, V> current, Consumer<Map.Entry<X, V>> downstream) {
                 // merge steps with equal values by removing intermediate entries
-                iterator.remove();
-                continue;
+                if (!Objects.equals(current.getValue(), last)) {
+                    downstream.accept(current);
+                    last = current.getValue();
+                }
             }
-            last = current;
-        }
+        }).toList();
     }
 
     /**
@@ -96,13 +97,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
      */
     public static <X, V> StepFunction<X, V> constant(V value, Comparator<? super X> xComparator) {
         Objects.requireNonNull(xComparator);
-        return new StepFunction<>(newConstantValues(value, xComparator), xComparator);
-    }
-
-    private static <X, V> TreeMap<X, V> newConstantValues(V value, Comparator<? super X> xComparator) {
-        TreeMap<X, V> map = new TreeMap<>(new NullFirstComparator<>(xComparator));
-        map.put(null, value);
-        return map;
+        return new StepFunction<>(List.of(newEntry(null, value)), xComparator);
     }
 
     /**
@@ -127,30 +122,44 @@ public final class StepFunction<X, V> implements Function<X, V> {
     public static <X, V> StepFunction<X, V> singleStep(Interval<X> interval, V valueInside, V valueOutside) {
         Objects.requireNonNull(interval);
 
-        final TreeMap<X, V> newValues = newConstantValues(valueOutside, interval.comparator());
-        if (!interval.isEmpty()) {
-            // if start is infinite, then it is negative infinity which we represent in this class with null
-            X start = interval.start().getValue().orElse(null);
-            newValues.put(start, valueInside);
-
-            // if end is not infinite, then we put a zero after the interval
-            interval.end().getValue().ifPresent(end -> newValues.put(end, valueOutside));
+        // if the interval is empty, the returned function is a constant
+        if (interval.isEmpty() || Objects.equals(valueInside, valueOutside)) {
+            return constant(valueOutside, interval.comparator());
         }
-        return new StepFunction<>(newValues, interval.comparator());
+
+        List<Map.Entry<X, V>> steps = new ArrayList<>(3);
+        Optional<X> intervalBegin = interval.start().getValue();
+        if (intervalBegin.isEmpty()) {
+            // if the interval starts at -infinity, then the first step is from -infinity to the end of the interval
+            // and has the inside-value
+            steps.add(newEntry(null, valueInside));
+        } else {
+            // if the interval doesn't start at -infinity, the first step is from -infinity to the beginning of the
+            // interval
+            steps.add(newEntry(null, valueOutside));
+            // second step: from the beginning to the end of the interval
+            steps.add(newEntry(intervalBegin.get(), valueInside));
+        }
+
+        // if the interval doesn't end at +infinity we need another step after the interval with the outside-value
+        interval.end().getValue().ifPresent(x -> steps.add(newEntry(x, valueOutside)));
+        return new StepFunction<>(steps, interval.comparator());
     }
 
     @Override
     public V apply(X x) {
         Objects.requireNonNull(x);
-        return values.floorEntry(x) // always non-null because null is always in the map and the smallest object
-                     .getValue();
+        Comparator<Map.Entry<X, V>> comparator = Map.Entry.comparingByKey(new NullFirstComparator<>(xComparator));
+        int i = Collections.binarySearch(entries, newEntry(x, null), comparator);
+        int index = i >= 0 ? i : -i - 2;
+        return entries.get(index).getValue();
     }
 
     /**
      * @return {@code true} iff this function is constant.
      */
     public boolean isConstant() {
-        return values.size() == 1;
+        return entries.size() == 1;
     }
 
     /**
@@ -158,7 +167,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * @return {@code true} iff this function is constant equal to the given value.
      */
     public boolean isConstant(final V value) {
-        return isConstant() && Objects.equals(values.get(null), value);
+        return entries.equals(List.of(newEntry(null, value)));
     }
 
     /**
@@ -169,7 +178,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
     public SequencedMap<Interval<X>, V> asPartitionWithValues() {
         SequencedMap<Interval<X>, V> result = new LinkedHashMap<>();
 
-        var iterator = values.entrySet().iterator();
+        var iterator = entries.iterator();
         var currentEntry = iterator.next();
         do {
             Bound<X> lowerBound = currentEntry.getKey() == null ? unboundedBelow() : Bound.of(currentEntry.getKey());
@@ -212,8 +221,8 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * @param <V>          the type of the values
      * @return a StepFunction having the given values on the given intervals, and {@code defaultValue} outside.
      * @throws NullPointerException     if {@code partition} is {@code null} or contains {@code null} as a key.
-     * @throws IllegalArgumentException if the partition contains empty intervals, if it contains overlapping interval,
-     *                                  or if the intervals do not all use the same comparator.
+     * @throws IllegalArgumentException if the partition is empty, contains empty intervals, contains overlapping
+     *                                  intervals, or if the intervals do not all use the same comparator.
      */
     public static <X, V> StepFunction<X, V> fromPartitionWithValues(Map<Interval<X>, V> partition, V defaultValue) {
         var iterator = partition.keySet().iterator();
@@ -226,7 +235,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
         Comparator<? super X> xComparator = iterator.next().comparator();
 
         // start with a StepFunction that is default everywhere
-        NavigableMap<X, V> values = newConstantValues(defaultValue, xComparator);
+        List<Map.Entry<X, V>> values = List.of(newEntry(null, defaultValue));
 
         PartitionMerger<X, V, V, V> merger = new PartitionMerger<>((oldValue, newValue) -> {
             if (Objects.equals(oldValue, defaultValue)) {
@@ -246,8 +255,8 @@ public final class StepFunction<X, V> implements Function<X, V> {
                 throw new IllegalArgumentException("Intervals must use compatible comparators");
             }
             V value = entry.getValue();
-            NavigableMap<X, V> additionalValues = StepFunction.singleStep(interval, value, defaultValue).values;
-            values = merger.apply(values, additionalValues);
+            List<Map.Entry<X, V>> additionalValues = StepFunction.singleStep(interval, value, defaultValue).entries;
+            values = merger.merge(values, additionalValues, xComparator);
         }
 
         return new StepFunction<>(values, xComparator);
@@ -258,7 +267,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * "-infinity" and ending with the value at "+infinity".
      */
     public List<V> values() {
-        return new ArrayList<>(values.values());
+        return entries.stream().map(Map.Entry::getValue).toList();
     }
 
     /**
@@ -274,9 +283,10 @@ public final class StepFunction<X, V> implements Function<X, V> {
      * @return the intervals where this function has a value different from the given zero value.
      */
     public List<Interval<X>> support(V zero) {
+        Objects.requireNonNull(zero);
         // We condense the function values down to a 3-valued Boolean: null if there is no value, true if the value
         // is zero, false otherwise. The support is exactly the inverse image of false.
-        StepFunction<X, Boolean> normalized = this.andThen(value -> value == null ? null : value.equals(zero));
+        StepFunction<X, Boolean> normalized = this.andThen(zero::equals);
         return normalized.asPartitionWithValues().entrySet().stream()
                          // filter out intervals where this Function is either not defined or equal to false
                          .filter(entry -> entry.getValue() != null && !entry.getValue())
@@ -284,13 +294,14 @@ public final class StepFunction<X, V> implements Function<X, V> {
                          .map(Map.Entry::getKey).toList();
     }
 
-    @SuppressWarnings("unchecked")
     @Override
     public <Y> StepFunction<X, Y> andThen(Function<? super V, ? extends Y> f) {
-        // unchecked casts so that we can use the more efficient copy constructor here
-        TreeMap<X, Object> result = new TreeMap<>(this.values);
-        result.replaceAll((k, v) -> v == null ? null : f.apply((V) v));
-        return new StepFunction<>((TreeMap<X, Y>) result, xComparator);
+        Objects.requireNonNull(f);
+        Function<V, Y> nullSafeF = v -> v == null ? null : f.apply(v);
+        return new StepFunction<>(
+                entries.stream()
+                       .map(e -> newEntry(e.getKey(), nullSafeF.apply(e.getValue())))
+                       .collect(Collectors.toCollection(ArrayList::new)), xComparator);
     }
 
 
@@ -334,7 +345,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
      */
     public static <X, Y> EndoBiFunctor<X, Y> pointwise(BinaryOperator<Y> f) {
         final PartitionMerger<X, Y, Y, Y> partitionMerger = new PartitionMerger<>(f);
-        return (s1, s2) -> new StepFunction<>(partitionMerger.apply(s1.values, s2.values), s1.xComparator);
+        return (s1, s2) -> new StepFunction<>(partitionMerger.merge(s1, s2), s1.xComparator);
     }
 
     @FunctionalInterface
@@ -352,7 +363,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
      */
     public static <X, Y1, Y2, Z> BiFunctor<X, Y1, Y2, Z> pointwise(BiFunction<Y1, Y2, Z> f) {
         final PartitionMerger<X, Y1, Y2, Z> partitionMerger = new PartitionMerger<>(f);
-        return (s1, s2) -> new StepFunction<>(partitionMerger.apply(s1.values, s2.values), s1.xComparator);
+        return (s1, s2) -> new StepFunction<>(partitionMerger.merge(s1, s2), s1.xComparator);
     }
 
     @Override
@@ -360,25 +371,32 @@ public final class StepFunction<X, V> implements Function<X, V> {
         if (this == o) {
             return true;
         }
-        return o instanceof StepFunction<?, ?> that && this.xComparator.equals(that.xComparator) && this.values.equals(
-                that.values);
+        return o instanceof StepFunction<?, ?> that && this.xComparator.equals(that.xComparator) && this.entries.equals(
+                that.entries);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(xComparator, values);
+        return Objects.hash(xComparator, entries);
     }
 
     /**
      * Merges two step-functions by creating a common refinement of the two partitions and applying a BiFunction to both
      * values on each part.
      */
-    private record PartitionMerger<X, Y1, Y2, Z>(BiFunction<Y1, Y2, Z> action)
-            implements BiFunction<SortedMap<X, Y1>, SortedMap<X, Y2>, NavigableMap<X, Z>> {
+    private record PartitionMerger<X, Y1, Y2, Z>(BiFunction<Y1, Y2, Z> action) {
 
-        @Override
-        public NavigableMap<X, Z> apply(SortedMap<X, Y1> a, SortedMap<X, Y2> b) {
-            return new Iteration<>(a, b, action).result;
+        List<Map.Entry<X, Z>> merge(StepFunction<X, Y1> a, StepFunction<X, Y2> b) {
+            final Comparator<? super X> comparator = a.xComparator;
+            if (!comparator.equals(b.xComparator)) {
+                throw new IllegalArgumentException("Operation not applicable to incompatible step-functions");
+            }
+            return merge(a.entries, b.entries, comparator);
+        }
+
+        List<Map.Entry<X, Z>> merge(List<Map.Entry<X, Y1>> a, List<Map.Entry<X, Y2>> b,
+                                    Comparator<? super X> comparator) {
+            return new Iteration<>(a, b, new NullFirstComparator<>(comparator), action).result;
         }
 
         /**
@@ -392,23 +410,20 @@ public final class StepFunction<X, V> implements Function<X, V> {
             private Map.Entry<X, Y1> aEntry;
             private Map.Entry<X, Y2> bEntry;
 
-            private final TreeMap<X, Z> result;
+            private final List<Map.Entry<X, Z>> result;
 
-            Iteration(SortedMap<X, Y1> a, SortedMap<X, Y2> b, BiFunction<Y1, Y2, Z> action) {
-                final Comparator<? super X> comparator = a.comparator();
-                if (!comparator.equals(b.comparator())) { // equality from NullFirstComparator
-                    throw new IllegalArgumentException("Operation not applicable to incompatible step-functions");
-                }
+            Iteration(List<Map.Entry<X, Y1>> a, List<Map.Entry<X, Y2>> b, Comparator<? super X> comparator,
+                      BiFunction<Y1, Y2, Z> action) {
 
                 // we iterate in decreasing order through both maps
-                aIter = a.sequencedEntrySet().reversed().iterator();
-                bIter = b.sequencedEntrySet().reversed().iterator();
+                aIter = a.reversed().iterator();
+                bIter = b.reversed().iterator();
 
                 // both maps are non-empty; they contain null as lowest key
                 aEntry = aIter.next();
                 bEntry = bIter.next();
 
-                result = new TreeMap<>(comparator);
+                result = new ArrayList<>(a.size() + b.size());
 
                 // zig-zag algorithm
                 boolean moreToDo = true;
@@ -435,7 +450,7 @@ public final class StepFunction<X, V> implements Function<X, V> {
                         currentKey = aEntry.getKey();
                         moreToDo = decreaseA();
                     }
-                    result.put(currentKey, currentValue);
+                    result.addFirst(newEntry(currentKey, currentValue));
                 }
             }
 
@@ -477,5 +492,10 @@ public final class StepFunction<X, V> implements Function<X, V> {
             }
             return inner.compare(o1, o2);
         }
+
+    }
+
+    private static <K, Y> Map.Entry<K, Y> newEntry(K key, Y value) {
+        return new AbstractMap.SimpleImmutableEntry<>(key, value);
     }
 }
